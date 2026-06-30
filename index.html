@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BOSS Project Manager</title>
+    <script type="module">
+        import { get, set, del, keys } from 'https://cdn.jsdelivr.net/npm/idb-keyval@6/+esm';
+        
+        const state = {
+            projects: [],
+            selectedProjectId: null
+        };
+
+        // Load all projects from IndexedDB
+        async function loadProjects() {
+            const projectKeys = await keys();
+            const projectPromises = projectKeys
+                .filter(key => key.startsWith('project_'))
+                .map(key => get(key));
+            const projects = await Promise.all(projectPromises);
+            state.projects = projects.filter(p => p !== undefined);
+            render();
+        }
+
+        // Save project to IndexedDB
+        async function saveProject(project) {
+            await set(`project_${project.id}`, project);
+            const index = state.projects.findIndex(p => p.id === project.id);
+            if (index >= 0) {
+                state.projects[index] = project;
+            } else {
+                state.projects.push(project);
+            }
+            render();
+        }
+
+        // Delete project from IndexedDB
+        async function deleteProject(id) {
+            await del(`project_${id}`);
+            state.projects = state.projects.filter(p => p.id !== id);
+            if (state.selectedProjectId === id) {
+                state.selectedProjectId = null;
+            }
+            render();
+        }
+
+        // Create new project
+        function createProject() {
+            const name = prompt('Project name:');
+            if (!name) return;
+            const description = prompt('Description (optional):') || '';
+            const project = {
+                id: Date.now().toString(),
+                name,
+                description,
+                status: 'active',
+                tasks: [],
+                createdAt: new Date().toISOString()
+            };
+            saveProject(project);
+            state.selectedProjectId = project.id;
+        }
+
+        // Edit project
+        function editProject(id) {
+            const project = state.projects.find(p => p.id === id);
+            if (!project) return;
+            const name = prompt('Project name:', project.name);
+            if (name === null) return;
+            const description = prompt('Description:', project.description);
+            if (description === null) return;
+            project.name = name || project.name;
+            project.description = description !== null ? description : project.description;
+            saveProject(project);
+        }
+
+        // Change project status
+        function changeStatus(id, status) {
+            const project = state.projects.find(p => p.id === id);
+            if (!project) return;
+            project.status = status;
+            saveProject(project);
+        }
+
+        // Add task to project
+        function addTask(projectId) {
+            const project = state.projects.find(p => p.id === projectId);
+            if (!project) return;
+            const taskName = prompt('Task name:');
+            if (!taskName) return;
+            const task = {
+                id: Date.now().toString(),
+                name: taskName,
+                completed: false,
+                createdAt: new Date().toISOString()
+            };
+            project.tasks.push(task);
+            saveProject(project);
+        }
+
+        // Toggle task completion
+        function toggleTask(projectId, taskId) {
+            const project = state.projects.find(p => p.id === projectId);
+            if (!project) return;
+            const task = project.tasks.find(t => t.id === taskId);
+            if (!task) return;
+            task.completed = !task.completed;
+            saveProject(project);
+        }
+
+        // Delete task
+        function deleteTask(projectId, taskId) {
+            const project = state.projects.find(p => p.id === projectId);
+            if (!project) return;
+            project.tasks = project.tasks.filter(t => t.id !== taskId);
+            saveProject(project);
+        }
+
+        // Select project
+        function selectProject(id) {
+            state.selectedProjectId = id;
+            render();
+        }
+
+        // Render UI
+        function render() {
+            const selectedProject = state.projects.find(p => p.id === state.selectedProjectId);
+            
+            // Render sidebar
+            const sidebar = document.getElementById('sidebar');
+            sidebar.innerHTML = `
+                <div class="p-4 border-b border-gray-700">
+                    <h1 class="text-xl font-bold text-white flex items-center gap-2">
+                        <svg class="w-6 h-6 text-sky-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                        </svg>
+                        BOSS PM
+                    </h1>
+                </div>
+                <div class="p-4">
+                    <button onclick="window.createProject()" class="w-full bg-sky-500 hover:bg-sky-600 text-white font-medium py-2 px-4 rounded-lg transition-colors flex items-center justify-center gap-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                        </svg>
+                        New Project
+                    </button>
+                </div>
+                <div class="flex-1 overflow-y-auto px-4 space-y-2">
+                    ${state.projects.map(project => {
+                        const taskCount = project.tasks.length;
+                        const completedCount = project.tasks.filter(t => t.completed).length;
+                        const isSelected = state.selectedProjectId === project.id;
+                        const statusColors = {
+                            active: 'bg-green-500',
+                            paused: 'bg-yellow-500',
+                            done: 'bg-gray-500'
+                        };
+                        return `
+                            <div onclick="window.selectProject('${project.id}')" 
+                                 class="p-3 rounded-lg cursor-pointer transition-all ${isSelected ? 'bg-sky-500/20 border border-sky-500' : 'bg-gray-800 hover:bg-gray-750 border border-transparent'}">
+                                <div class="flex items-start justify-between gap-2">
+                                    <div class="flex-1 min-w-0">
+                                        <div class="font-medium text-white truncate">${escapeHtml(project.name)}</div>
+                                        <div class="text-sm text-gray-400 mt-1 flex items-center gap-2">
+                                            <span class="w-2 h-2 rounded-full ${statusColors[project.status]}"></span>
+                                            ${project.status}
+                                        </div>
+                                    </div>
+                                    <div class="flex flex-col items-end gap-1">
+                                        ${taskCount > 0 ? `
+                                            <span class="text-xs bg-sky-500/20 text-sky-400 px-2 py-1 rounded-full font-medium">
+                                                ${completedCount}/${taskCount}
+                                            </span>
+                                        ` : ''}
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            `;
+
+            // Render main area
+            const main = document.getElementById('main');
+            if (!selectedProject) {
+                main.innerHTML = `
+                    <div class="flex items-center justify-center h-full text-gray-500">
+                        <div class="text-center">
+                            <svg class="w-24 h-24 mx-auto mb-4 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                            </svg>
+                            <p class="text-lg">Select a project or create a new one</p>
+                        </div>
+                    </div>
+                `;
+            } else {
+                const statusOptions = ['active', 'paused', 'done'];
+                main.innerHTML = `
+                    <div class="h-full flex flex-col">
+                        <div class="border-b border-gray-700 p-6">
+                            <div class="flex items-start justify-between gap-4">
+                                <div class="flex-1">
+                                    <h2 class="text-2xl font-bold text-white mb-2">${escapeHtml(selectedProject.name)}</h2>
+                                    ${selectedProject.description ? `<p class="text-gray-400">${escapeHtml(selectedProject.description)}</p>` : ''}
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <select onchange="window.changeStatus('${selectedProject.id}', this.value)" 
+                                            class="bg-gray-800 text-white border border-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-sky-500">
+                                        ${statusOptions.map(status => `
+                                            <option value="${status}" ${selectedProject.status === status ? 'selected' : ''}>
+                                                ${status.charAt(0).toUpperCase() + status.slice(1)}
+                                            </option>
+                                        `).join('')}
+                                    </select>
+                                    <button onclick="window.editProject('${selectedProject.id}')" 
+                                            class="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors">
+                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                                        </svg>
+                                    </button>
+                                    <button onclick="if(confirm('Delete this project?')) window.deleteProject('${selectedProject.id}')" 
+                                            class="p-2 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors">
+                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="flex-1 overflow-y-auto p-6">
+                            <div class="mb-4">
+                                <button onclick="window.addTask('${selectedProject.id}')" 
+                                        class="bg-sky-500 hover:bg-sky-600 text-white font-medium py-2 px-4 rounded-lg transition-colors flex items-center gap-2">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                                    </svg>
+                                    Add Task
+                                </button>
+                            </div>
+                            ${selectedProject.tasks.length === 0 ? `
+                                <div class="text-center py-12 text-gray-500">
+                                    <svg class="w-16 h-16 mx-auto mb-3 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/>
+                                    </svg>
+                                    <p>No tasks yet. Add one to get started!</p>
+                                </div>
+                            ` : `
+                                <div class="space-y-2">
+                                    ${selectedProject.tasks.map(task => `
+                                        <div class="flex items-center gap-3 p-4 bg-gray-800 rounded-lg hover:bg-gray-750 transition-colors group">
+                                            <button onclick="window.toggleTask('${selectedProject.id}', '${task.id}')" 
+                                                    class="flex-shrink-0 w-6 h-6 rounded border-2 ${task.completed ? 'bg-sky-500 border-sky-500' : 'border-gray-600'} flex items-center justify-center transition-colors hover:border-sky-500">
+                                                ${task.completed ? `
+                                                    <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+                                                    </svg>
+                                                ` : ''}
+                                            </button>
+                                            <span class="flex-1 ${task.completed ? 'text-gray-500 line-through' : 'text-white'}">${escapeHtml(task.name)}</span>
+                                            <button onclick="if(confirm('Delete this task?')) window.deleteTask('${selectedProject.id}', '${task.id}')" 
+                                                    class="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-red-400 hover:text-red-300 rounded">
+                                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            `}
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Expose functions to window
+        window.createProject = createProject;
+        window.editProject = editProject;
+        window.deleteProject = deleteProject;
+        window.changeStatus = changeStatus;
+        window.selectProject = selectProject;
+        window.addTask = addTask;
+        window.toggleTask = toggleTask;
+        window.deleteTask = deleteTask;
+
+        // Initialize app
+        loadProjects();
+    </script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #111827;
+            color: #fff;
+            height: 100vh;
+            overflow: hidden;
+        }
+        #app {
+            display: flex;
+            height: 100vh;
+        }
+        #sidebar {
+            width: 320px;
+            background: #1f2937;
+            border-right: 1px solid #374151;
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+        }
+        #main {
+            flex: 1;
+            overflow: hidden;
+            background: #111827;
+        }
+        button {
+            cursor: pointer;
+            border: none;
+            outline: none;
+            font-family: inherit;
+        }
+        select {
+            cursor: pointer;
+        }
+        .bg-gray-750 {
+            background-color: #2d3748;
+        }
+        @media (max-width: 768px) {
+            #app {
+                flex-direction: column;
+            }
+            #sidebar {
+                width: 100%;
+                max-height: 40vh;
+                border-right: none;
+                border-bottom: 1px solid #374151;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div id="sidebar"></div>
+        <div id="main"></div>
+    </div>
+</body>
+</html>
